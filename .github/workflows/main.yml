@@ -1,77 +1,113 @@
-name: Ubuntu GNOME VNC
+name: RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  vnc:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
 
     steps:
-      - name: Update packages
+      - name: Configure Core RDP Settings
         run: |
-          sudo apt-get update -y
-          sudo apt-get upgrade -y
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
 
-      - name: Create VNC user
-        id: user
-        run: |
-          # Tạo mật khẩu ngẫu nhiên (12 ký tự, chỉ chữ + số)
-          PASS=$(head -c 100 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 12)
-          echo "VNC_PASS=$PASS" >> $GITHUB_ENV
+          # Remove any existing rule with the same name to avoid duplication
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
           
-          # Tạo user vncuser
-          sudo useradd -m -s /bin/bash vncuser
-          echo "vncuser:$PASS" | sudo chpasswd
-          sudo usermod -aG sudo vncuser
+          # For testing, allow any incoming connection on port 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Secure Password
+        run: |
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)      # A-Z
+              Lower   = [char[]](97..122)     # a-z
+              Number  = [char[]](48..57)      # 0-9
+              Special = ([char[]](33..47) + [char[]](58..64) +
+                         [char[]](91..96) + [char[]](123..126)) # Special characters
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           
-          echo "User: vncuser"
-          echo "Pass: $PASS"
-
-      - name: Install Desktop + VNC
-        run: |
-          sudo apt-get install -y ubuntu-desktop gnome-shell gdm3
-          sudo apt-get install -y tigervnc-standalone-server tigervnc-common novnc websockify
-
-      - name: Setup VNC password
-        run: |
-          sudo -u vncuser mkdir -p /home/vncuser/.vnc
-          echo "$VNC_PASS" | vncpasswd -f | sudo tee /home/vncuser/.vnc/passwd > /dev/null
-          sudo chown -R vncuser:vncuser /home/vncuser/.vnc
-          sudo chmod 600 /home/vncuser/.vnc/passwd
-
-      - name: Start VNC + noVNC
-        run: |
-          # Start VNC server trên display :1
-          sudo -u vncuser vncserver :1 -geometry 1280x720 -depth 24
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
           
-          # Start noVNC (port 6080)
-          websockify --web=/usr/share/novnc/ 6080 localhost:5901 &
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
 
-      - name: Install ngrok
+      - name: Install Tailscale
         run: |
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt-get update -y
-          sudo apt-get install -y ngrok
-
-      - name: Start ngrok tunnel
-        run: |
-          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          nohup ngrok http 6080 > ngrok.log 2>&1 &
-          sleep 5
-          curl --silent --show-error http://127.0.0.1:4040/api/tunnels > tunnels.json
-          cat tunnels.json
-          echo "NGROK_URL=$(jq -r '.tunnels[0].public_url' tunnels.json)" >> $GITHUB_ENV
-
-      - name: Show connection info
-        run: |
-          echo "=============================="
-          echo "🌐 noVNC URL: $NGROK_URL"
-          echo "👤 User: vncuser"
-          echo "🔑 Pass: $VNC_PASS"
-          echo "=============================="
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
           
-          # Giữ session sống
-          while true; do sleep 300; done
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          # Bring up Tailscale with the provided auth key and set a unique hostname
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          
+          # Wait for Tailscale to assign an IP
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+      
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          
+          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "==================`n"
+          
+          # Keep runner active indefinitely (or until manually cancelled)
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
