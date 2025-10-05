@@ -1,0 +1,74 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup RDP and Create User
+        id: rdp_setup
+        run: |
+          ./scripts/setup-rdp.ps1
+        shell: pwsh
+
+      - name: Schedule Provisioning Task
+        run: |
+          ./scripts/create-provisioning-task.ps1
+        shell: pwsh
+
+      - name: Install Tailscale
+        run: |
+          winget install -e --id Tailscale.Tailscale --source winget --locale en-US --accept-package-agreements --accept-source-agreements
+
+      - name: Establish Tailscale Connection
+        id: tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "::set-output name=TAILSCALE_IP::$tsIP"
+        shell: pwsh
+
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: ${{ steps.tailscale.outputs.TAILSCALE_IP }}"
+
+          $testResult = Test-NetConnection -ComputerName "${{ steps.tailscale.outputs.TAILSCALE_IP }}" -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+        shell: pwsh
+
+      - name: Display RDP Connection Info
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: ${{ steps.tailscale.outputs.TAILSCALE_IP }}"
+          Write-Host "Username: ${{ steps.rdp_setup.outputs.RDP_USER }}"
+          Write-Host "Password: ${{ steps.rdp_setup.outputs.RDP_PASSWORD }}"
+          Write-Host "==================`n"
+
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
+        shell: pwsh
