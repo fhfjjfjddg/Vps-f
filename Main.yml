@@ -12,6 +12,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set System Locale for WinGet
+        run: Set-WinSystemLocale -SystemLocale en-US
+        shell: pwsh
+
       - name: Configure Core RDP Settings
         run: ./scripts/Configure-Rdp.ps1
         shell: pwsh

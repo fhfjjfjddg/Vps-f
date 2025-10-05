@@ -1,6 +1,3 @@
-# Disable the msstore source to prevent interactive agreement prompts on the runner
-winget source disable msstore
-
 # Disable Hyper-V if enabled
 $hv = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
 if ($hv.State -eq "Enabled") {

@@ -1,6 +1,3 @@
-# Disable the msstore source to prevent interactive agreement prompts on the runner
-winget source disable msstore
-
 # Upgrade all packages
 winget upgrade --all --accept-package-agreements --accept-source-agreements
 
