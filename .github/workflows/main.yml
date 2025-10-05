@@ -1,4 +1,4 @@
-name: RDP
+ name: RDP
 
 on:
   workflow_dispatch:
@@ -30,7 +30,7 @@ jobs:
                              -Name "AudioCaptureRedirectionMode" -Value 0 -Force
 
           # Firewall rule for RDP
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
@@ -52,8 +52,38 @@ jobs:
           Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
           Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
 
-          # Install BlueStacks emulator
-          winget install -e --id BlueStacks.BlueStacks --accept-package-agreements --accept-source-agreements
+      - name: Install BlueStacks Emulator
+        run: |
+          # Accept msstore agreements first
+          winget list --accept-source-agreements 2>$null
+          
+          # Try to install BlueStacks from winget source (not msstore)
+          Write-Host "Installing BlueStacks..."
+          $result = winget install -e --id BlueStacks.BlueStacks `
+            --source winget `
+            --locale en-US `
+            --accept-package-agreements `
+            --accept-source-agreements 2>&1
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "BlueStacks installation via winget failed, trying direct download..."
+              
+              # Fallback: Direct download and install
+              $bluestacksUrl = "https://cdn3.bluestacks.com/downloads/windows/nxt/5.21.100.1001/x64/BlueStacksFullInstaller_5.21.100.1001_amd64_native.exe"
+              $installerPath = "$env:TEMP\BlueStacks_Installer.exe"
+              
+              try {
+                  Invoke-WebRequest -Uri $bluestacksUrl -OutFile $installerPath -UseBasicParsing
+                  Start-Process -FilePath $installerPath -ArgumentList "-s" -Wait -NoNewWindow
+                  Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+                  Write-Host "BlueStacks installed successfully via direct download"
+              } catch {
+                  Write-Warning "BlueStacks installation failed: $_"
+                  Write-Host "Continuing without BlueStacks..."
+              }
+          } else {
+              Write-Host "BlueStacks installed successfully via winget"
+          }
 
       - name: Enable and Install Audio Support
         run: |
@@ -63,38 +93,65 @@ jobs:
 
           # Update all system drivers to latest available
           pnputil /scan-devices
-          pnputil /update-driver * /install
-
+          
       - name: Upgrade System Apps and Browsers
         run: |
-          # Upgrade all packages
-          winget upgrade --all --accept-package-agreements --accept-source-agreements
+          # Accept all source agreements first
+          winget list --accept-source-agreements 2>$null
+          
+          # Upgrade all packages from winget source only
+          Write-Host "Upgrading all packages..."
+          winget upgrade --all `
+            --source winget `
+            --locale en-US `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --silent 2>$null
 
           # Ensure Google Chrome is installed or upgraded
-          if (-not (winget list --id Google.Chrome)) {
-            winget install -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+          Write-Host "Checking Google Chrome..."
+          $chromeInstalled = winget list --id Google.Chrome 2>$null
+          if (-not $chromeInstalled) {
+            winget install -e --id Google.Chrome `
+              --source winget `
+              --locale en-US `
+              --accept-package-agreements `
+              --accept-source-agreements
           } else {
-            winget upgrade -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+            winget upgrade -e --id Google.Chrome `
+              --source winget `
+              --locale en-US `
+              --accept-package-agreements `
+              --accept-source-agreements 2>$null
           }
 
           # Upgrade Edge to latest version
-          winget upgrade -e --id Microsoft.Edge --accept-package-agreements --accept-source-agreements
+          Write-Host "Upgrading Microsoft Edge..."
+          winget upgrade -e --id Microsoft.Edge `
+            --source winget `
+            --locale en-US `
+            --accept-package-agreements `
+            --accept-source-agreements 2>$null
 
       - name: Install or Upgrade WSL
         run: |
           # Ensure WSL is installed
-          if (-not (wsl --status)) {
+          try {
+              $wslStatus = wsl --status 2>&1
+              Write-Host "WSL is already installed"
+          } catch {
               Write-Host "WSL not found, installing..."
               wsl --install --no-launch
           }
 
           # Update WSL kernel and set default to WSL 2
-          wsl --update
+          wsl --update 2>$null
           wsl --set-default-version 2
 
           # Optional: install Ubuntu distro if not exists
-          if (-not (wsl -l -q | Select-String "Ubuntu")) {
-              wsl --install -d Ubuntu
+          $ubuntuExists = wsl -l -q 2>$null | Select-String "Ubuntu"
+          if (-not $ubuntuExists) {
+              wsl --install -d Ubuntu --no-launch 2>$null
           }
 
           # Verify WSL status
@@ -120,7 +177,8 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
-          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
 
           if (-not (Get-LocalUser -Name "RDP")) {
               Write-Error "User creation failed"
@@ -129,12 +187,15 @@ jobs:
 
       - name: Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
+          # Accept source agreements
+          winget list --accept-source-agreements 2>$null
           
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item $installerPath -Force
+          Write-Host "Installing Tailscale..."
+          winget install -e --id Tailscale.Tailscale `
+            --source winget `
+            --locale en-US `
+            --accept-package-agreements `
+            --accept-source-agreements
 
       - name: Establish Tailscale Connection
         run: |
@@ -169,8 +230,8 @@ jobs:
         run: |
           Write-Host "`n=== RDP ACCESS ==="
           Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "Username: $env:RDP_USER"
+          Write-Host "Password: $env:RDP_PASSWORD"
           Write-Host "==================`n"
           
           while ($true) {
