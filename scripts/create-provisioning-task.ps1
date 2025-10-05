@@ -1,4 +1,5 @@
 # scripts/create-provisioning-task.ps1
+$ErrorActionPreference = 'Stop'
 
 function Create-ProvisioningTask {
     $taskName = "ProvisionSystem"

@@ -1,4 +1,5 @@
 # scripts/provision.ps1
+$ErrorActionPreference = 'Stop'
 
 function Provision-System {
     # Disable Hyper-V if enabled

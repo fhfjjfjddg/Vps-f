@@ -34,6 +34,7 @@ jobs:
       - name: Establish Tailscale Connection
         id: tailscale
         run: |
+          $ErrorActionPreference = 'Stop'
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
 
           $tsIP = $null
@@ -45,18 +46,19 @@ jobs:
           }
 
           if (-not $tsIP) {
-              throw "Tailscale IP not assigned. Exiting."
+              Write-Error "Tailscale IP not assigned. Exiting."
           }
           echo "::set-output name=TAILSCALE_IP::$tsIP"
         shell: pwsh
 
       - name: Verify RDP Accessibility
         run: |
+          $ErrorActionPreference = 'Stop'
           Write-Host "Tailscale IP: ${{ steps.tailscale.outputs.TAILSCALE_IP }}"
 
           $testResult = Test-NetConnection -ComputerName "${{ steps.tailscale.outputs.TAILSCALE_IP }}" -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
-              throw "TCP connection to RDP port 3389 failed"
+              Write-Error "TCP connection to RDP port 3389 failed"
           }
           Write-Host "TCP connectivity successful!"
         shell: pwsh

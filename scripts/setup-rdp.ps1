@@ -1,4 +1,5 @@
 # scripts/setup-rdp.ps1
+$ErrorActionPreference = 'Stop'
 
 function Setup-RDP {
     # Enable Remote Desktop and disable Network Level Authentication
@@ -50,7 +51,7 @@ function Setup-RDP {
     Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
     if (-not (Get-LocalUser -Name "RDP")) {
-        throw "User creation failed"
+        Write-Error "User creation failed"
     }
 
     # Output credentials for GitHub Actions

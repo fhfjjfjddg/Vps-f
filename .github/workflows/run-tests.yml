@@ -22,7 +22,8 @@ jobs:
       - name: Run Pester Tests
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $result = Invoke-Pester -Path "tests" -PassThru
           if ($result.FailedCount -gt 0) {
-              throw "$($result.FailedCount) tests failed."
+              Write-Error "$($result.FailedCount) tests failed."
           }
