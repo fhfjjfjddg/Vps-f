@@ -27,7 +27,7 @@ function Setup-RDP {
     pnputil /update-driver * /install
 
     # Upgrade all winget packages to ensure the system is up-to-date
-    winget upgrade --all --source winget --locale en-US --accept-package-agreements --accept-source-agreements
+    winget upgrade --all --locale en-US --accept-package-agreements --accept-source-agreements
 
     # Create a new local user with a secure, random password
     Add-Type -AssemblyName System.Security

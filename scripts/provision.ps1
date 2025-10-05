@@ -15,17 +15,17 @@ function Provision-System {
     Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
 
     # Install BlueStacks emulator
-    winget install -e --id BlueStacks.BlueStacks --source winget --locale en-US --accept-package-agreements --accept-source-agreements
+    winget install -e --id BlueStacks.BlueStacks --locale en-US --accept-package-agreements --accept-source-agreements
 
     # Install/Upgrade Google Chrome
     if (-not (winget list --id Google.Chrome)) {
-        winget install -e --id Google.Chrome --source winget --locale en-US --accept-package-agreements --accept-source-agreements
+        winget install -e --id Google.Chrome --locale en-US --accept-package-agreements --accept-source-agreements
     } else {
-        winget upgrade -e --id Google.Chrome --source winget --locale en-US --accept-package-agreements --accept-source-agreements
+        winget upgrade -e --id Google.Chrome --locale en-US --accept-package-agreements --accept-source-agreements
     }
 
     # Upgrade Microsoft Edge
-    winget upgrade -e --id Microsoft.Edge --source winget --locale en-US --accept-package-agreements --accept-source-agreements
+    winget upgrade -e --id Microsoft.Edge --locale en-US --accept-package-agreements --accept-source-agreements
 
     # Install or Upgrade WSL
     if (-not (wsl --status)) {
