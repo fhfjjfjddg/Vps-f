@@ -1,1 +1,179 @@
+name: RDP
 
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
+
+          # Enable audio playback redirection
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "fDisableAudioRedirection" -Value 0 -Force
+          
+          # Enable microphone (audio capture) redirection
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "fDisableAudioCapture" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "AudioCaptureRedirectionMode" -Value 0 -Force
+
+          # Firewall rule for RDP
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          # Restart Remote Desktop service
+          Restart-Service -Name TermService -Force
+
+      - name: Disable Hyper-V and Prepare Emulator Support
+        run: |
+          # Disable Hyper-V if enabled
+          $hv = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
+          if ($hv.State -eq "Enabled") {
+              Write-Host "Hyper-V is enabled, disabling..."
+              Disable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -NoRestart
+          } else {
+              Write-Host "Hyper-V is already disabled"
+          }
+
+          # Enable Virtual Machine Platform and Hypervisor Platform
+          Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+          Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
+
+          # Install BlueStacks emulator
+          winget install -e --id BlueStacks.BlueStacks --accept-package-agreements --accept-source-agreements
+
+      - name: Enable and Install Audio Support
+        run: |
+          # Ensure Windows Audio service is enabled and running
+          Set-Service -Name "Audiosrv" -StartupType Automatic
+          Start-Service -Name "Audiosrv"
+
+          # Update all system drivers to latest available
+          pnputil /scan-devices
+          pnputil /update-driver * /install
+
+      - name: Upgrade System Apps and Browsers
+        run: |
+          # Upgrade all packages
+          winget upgrade --all --accept-package-agreements --accept-source-agreements
+
+          # Ensure Google Chrome is installed or upgraded
+          if (-not (winget list --id Google.Chrome)) {
+            winget install -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+          } else {
+            winget upgrade -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+          }
+
+          # Upgrade Edge to latest version
+          winget upgrade -e --id Microsoft.Edge --accept-package-agreements --accept-source-agreements
+
+      - name: Install or Upgrade WSL
+        run: |
+          # Ensure WSL is installed
+          if (-not (wsl --status)) {
+              Write-Host "WSL not found, installing..."
+              wsl --install --no-launch
+          }
+
+          # Update WSL kernel and set default to WSL 2
+          wsl --update
+          wsl --set-default-version 2
+
+          # Optional: install Ubuntu distro if not exists
+          if (-not (wsl -l -q | Select-String "Ubuntu")) {
+              wsl --install -d Ubuntu
+          }
+
+          # Verify WSL status
+          wsl --status
+
+      - name: Create RDP User with Secure Password
+        run: |
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)
+              Lower   = [char[]](97..122)
+              Number  = [char[]](48..57)
+              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
+          }
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+      
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "==================`n"
+          
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
