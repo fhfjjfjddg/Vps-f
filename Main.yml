@@ -1,45 +1,54 @@
+# This is a basic workflow that creates a secure RDP session.
 name: RDP
 
+# This workflow is triggered manually from the Actions tab.
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
+    # This job runs on the latest version of Windows Server.
     runs-on: windows-latest
+    # This sets a timeout for the job to 6 hours (360 minutes).
     timeout-minutes: 3600
 
     steps:
+      # This step configures the core settings for Remote Desktop Protocol (RDP).
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # This command enables Remote Desktop by modifying the registry.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
+          # This command disables Network Level Authentication (NLA) for broader compatibility.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "UserAuthentication" -Value 0 -Force
+          # This command sets the security layer to the RDP-specific layer.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "SecurityLayer" -Value 0 -Force
 
-          # Enable audio playback redirection
+          # This command enables audio redirection to play audio from the remote session on the local machine.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "fDisableAudioRedirection" -Value 0 -Force
           
-          # Enable microphone (audio capture) redirection
+          # This command enables microphone redirection to capture audio from the local machine.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "fDisableAudioCapture" -Value 0 -Force
+          # This command sets the audio capture redirection mode.
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "AudioCaptureRedirectionMode" -Value 0 -Force
 
-          # Firewall rule for RDP
+          # This command creates a firewall rule to allow RDP traffic over Tailscale.
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
-          # Restart Remote Desktop service
+          # This command restarts the Remote Desktop service to apply the changes.
           Restart-Service -Name TermService -Force
 
+      # This step disables Hyper-V and prepares the system for emulator support.
       - name: Disable Hyper-V and Prepare Emulator Support
         run: |
-          # Disable Hyper-V if enabled
+          # This command checks if Hyper-V is enabled and disables it if necessary.
           $hv = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All
           if ($hv.State -eq "Enabled") {
               Write-Host "Hyper-V is enabled, disabling..."
@@ -48,60 +57,65 @@ jobs:
               Write-Host "Hyper-V is already disabled"
           }
 
-          # Enable Virtual Machine Platform and Hypervisor Platform
+          # This command enables the Windows Virtual Machine Platform and Hypervisor Platform for emulator support.
           Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
           Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
 
-          # Install BlueStacks emulator
+          # This command installs the BlueStacks emulator using winget.
           winget install -e --id BlueStacks.BlueStacks --accept-package-agreements --accept-source-agreements
 
+      # This step enables and installs audio support.
       - name: Enable and Install Audio Support
         run: |
-          # Ensure Windows Audio service is enabled and running
+          # This command ensures the Windows Audio service is enabled and running.
           Set-Service -Name "Audiosrv" -StartupType Automatic
           Start-Service -Name "Audiosrv"
 
-          # Update all system drivers to latest available
+          # This command scans for new devices and installs the latest drivers.
           pnputil /scan-devices
           pnputil /update-driver * /install
 
+      # This step upgrades all system apps and browsers to their latest versions.
       - name: Upgrade System Apps and Browsers
         run: |
-          # Upgrade all packages
+          # This command upgrades all installed packages using winget.
           winget upgrade --all --accept-package-agreements --accept-source-agreements
 
-          # Ensure Google Chrome is installed or upgraded
+          # This command installs or upgrades Google Chrome to the latest version.
           if (-not (winget list --id Google.Chrome)) {
             winget install -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
           } else {
             winget upgrade -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
           }
 
-          # Upgrade Edge to latest version
+          # This command upgrades Microsoft Edge to the latest version.
           winget upgrade -e --id Microsoft.Edge --accept-package-agreements --accept-source-agreements
 
+      # This step installs or upgrades the Windows Subsystem for Linux (WSL).
       - name: Install or Upgrade WSL
         run: |
-          # Ensure WSL is installed
+          # This command checks if WSL is installed and installs it if necessary.
           if (-not (wsl --status)) {
               Write-Host "WSL not found, installing..."
               wsl --install --no-launch
           }
 
-          # Update WSL kernel and set default to WSL 2
+          # This command updates the WSL kernel and sets the default version to WSL 2.
           wsl --update
           wsl --set-default-version 2
 
-          # Optional: install Ubuntu distro if not exists
+          # This command installs the Ubuntu distribution for WSL if it's not already installed.
           if (-not (wsl -l -q | Select-String "Ubuntu")) {
               wsl --install -d Ubuntu
           }
 
-          # Verify WSL status
+          # This command verifies the WSL status.
           wsl --status
 
+      # This step creates a new local user for RDP access with a secure, randomly generated password.
       - name: Create RDP User with Secure Password
         run: |
+          # This command generates a random password with a mix of character types.
           Add-Type -AssemblyName System.Security
           $charSet = @{
               Upper   = [char[]](65..90)
@@ -115,26 +129,34 @@ jobs:
           $rawPassword += $charSet.Number | Get-Random -Count 4
           $rawPassword += $charSet.Special | Get-Random -Count 4
           $password = -join ($rawPassword | Sort-Object { Get-Random })
+          # This command creates a new local user with the generated password.
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          # This command adds the new user to the Administrators and Remote Desktop Users groups.
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
+          # This command saves the RDP credentials as a GitHub environment variable.
           echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
 
+          # This command verifies that the user was created successfully.
           if (-not (Get-LocalUser -Name "RDP")) {
               Write-Error "User creation failed"
               exit 1
           }
 
+      # This step installs Tailscale for secure network access.
       - name: Install Tailscale
         run: |
           winget install -e --id Tailscale.Tailscale --accept-package-agreements --accept-source-agreements
 
+      # This step establishes a connection to the Tailscale network.
       - name: Establish Tailscale Connection
         run: |
+          # This command connects to Tailscale using the provided authentication key.
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
           
+          # This loop retrieves the Tailscale IP address, with retries.
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -143,16 +165,20 @@ jobs:
               $retries++
           }
           
+          # This command exits the workflow if a Tailscale IP address could not be assigned.
           if (-not $tsIP) {
               Write-Error "Tailscale IP not assigned. Exiting."
               exit 1
           }
+          # This command saves the Tailscale IP address as a GitHub environment variable.
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
       
+      # This step verifies that the RDP port is accessible over the Tailscale network.
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           
+          # This command tests the TCP connection to the RDP port.
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
@@ -160,14 +186,17 @@ jobs:
           }
           Write-Host "TCP connectivity successful!"
 
+      # This step maintains the RDP connection by keeping the workflow job alive.
       - name: Maintain Connection
         run: |
+          # This command prints the RDP connection details to the workflow log.
           Write-Host "`n=== RDP ACCESS ==="
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           Write-Host "==================`n"
           
+          # This loop keeps the job running by sleeping for 5 minutes at a time.
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
               Start-Sleep -Seconds 300
