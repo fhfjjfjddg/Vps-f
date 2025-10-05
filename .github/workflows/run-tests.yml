@@ -1,0 +1,33 @@
+name: Run Pester Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Pester
+        run: Install-Module -Name Pester -Force -SkipPublisherCheck
+        shell: pwsh
+
+      - name: Run Pester tests
+        run: |
+          $result = Invoke-Pester -Script ./tests -PassThru
+          if ($result.FailedCount -gt 0) {
+              Write-Error "Pester tests failed!"
+              exit 1
+          }
+        shell: pwsh
