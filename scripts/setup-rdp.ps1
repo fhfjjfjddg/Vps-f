@@ -50,8 +50,7 @@ function Setup-RDP {
     Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
     if (-not (Get-LocalUser -Name "RDP")) {
-        Write-Error "User creation failed"
-        exit 1
+        throw "User creation failed"
     }
 
     # Output credentials for GitHub Actions
