@@ -53,7 +53,7 @@ jobs:
           Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
 
           # Install BlueStacks emulator
-          winget install -e --id BlueStacks.BlueStacks --accept-package-agreements --accept-source-agreements
+          winget install -e --id BlueStacks.BlueStacks --locale en-US --accept-package-agreements --accept-source-agreements
 
       - name: Enable and Install Audio Support
         run: |
@@ -68,17 +68,17 @@ jobs:
       - name: Upgrade System Apps and Browsers
         run: |
           # Upgrade all packages
-          winget upgrade --all --accept-package-agreements --accept-source-agreements
+          winget upgrade --all --locale en-US --accept-package-agreements --accept-source-agreements
 
-          # Ensure Google Chrome is installed or upgraded
+          # Ensure Google C
           if (-not (winget list --id Google.Chrome)) {
-            winget install -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+            winget install -e --id Google.Chrome --locale en-US --accept-package-agreements --accept-source-agreements
           } else {
-            winget upgrade -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+            winget upgrade -e --id Google.Chrome --locale en-US --accept-package-agreements --accept-source-agreements
           }
 
           # Upgrade Edge to latest version
-          winget upgrade -e --id Microsoft.Edge --accept-package-agreements --accept-source-agreements
+          winget upgrade -e --id Microsoft.Edge --locale en-US --accept-package-agreements --accept-source-agreements
 
       - name: Install or Upgrade WSL
         run: |
@@ -120,7 +120,8 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
-          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
 
           if (-not (Get-LocalUser -Name "RDP")) {
               Write-Error "User creation failed"
@@ -129,7 +130,7 @@ jobs:
 
       - name: Install Tailscale
         run: |
-          winget install -e --id Tailscale.Tailscale --accept-package-agreements --accept-source-agreements
+          winget install -e --id Tailscale.Tailscale --locale en-US --accept-package-agreements --accept-source-agreements
 
       - name: Establish Tailscale Connection
         run: |
@@ -164,8 +165,8 @@ jobs:
         run: |
           Write-Host "`n=== RDP ACCESS ==="
           Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "Username: $env:RDP_USER"
+          Write-Host "Password: $env:RDP_PASSWORD"
           Write-Host "==================`n"
           
           while ($true) {
