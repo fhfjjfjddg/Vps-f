@@ -37,11 +37,11 @@ jobs:
           Start-Service -Name "Audiosrv"
           Write-Host "Audio service enabled and started successfully"
 
-      - name: Install Vietnamese Language Pack & Set Locale to Vietnam (then schedule restart-resume)
+      - name: Install Vietnamese Language Pack & Set Locale to Vietnam
         run: |
-          Write-Host "Installing Vietnamese language pack and setting system locale/region to Vietnam..."
+          Write-Host "Installing Vietnamese language pack and setting system locale and region to Vietnam..."
 
-          # Install Vietnamese language capabilities (best-effort)
+          # Install Vietnamese language capabilities (best-effort). Some capabilities may already be present.
           $caps = @(
             "Language.Basic~~~vi-VN~0.0.1.0",
             "Language.Handwriting~~~vi-VN~0.0.1.0",
@@ -81,168 +81,10 @@ jobs:
             Write-Warning "Failed to set system locale / culture / timezone: $_"
           }
 
-          Write-Host "Preparing continuation script and scheduled task so remaining steps run automatically after reboot..."
-
-          # Create folder for continuation script and logs
-          New-Item -Path "C:\actions" -ItemType Directory -Force | Out-Null
-
-          # Build continuation script that will run at startup (runs outside of GitHub Actions)
-          $continueScript = @'
-# continuation script that runs after reboot
-# Logs everything to C:\actions\continue.log
-$Log = "C:\actions\continue.log"
-"==== Continue script started: $(Get-Date) ====" | Out-File -FilePath $Log -Encoding utf8 -Append
-
-try {
-  "Step: Install or Upgrade WSL2" | Out-File $Log -Append
-  try {
-      $wslStatus = wsl --status 2>&1
-      "WSL status: $wslStatus" | Out-File $Log -Append
-  } catch {
-      "WSL not found, installing..." | Out-File $Log -Append
-      wsl --install --no-launch
-  }
-  wsl --update | Out-File $Log -Append
-  wsl --set-default-version 2 | Out-File $Log -Append
-  try {
-    $ubuntuExists = wsl -l -q 2>$null | Select-String "Ubuntu"
-    if (-not $ubuntuExists) {
-      "Installing Ubuntu distribution..." | Out-File $Log -Append
-      wsl --install -d Ubuntu --no-launch 2>$null
-    }
-  } catch {
-    "WSL install step error: $_" | Out-File $Log -Append
-  }
-
-  "Step: Install Latest Google Chrome" | Out-File $Log -Append
-  try {
-    $chromeUrl = "https://dl.google.com/chrome/install/GoogleChromeStandaloneEnterprise64.msi"
-    $installerPath = "$env:TEMP\chrome_installer.msi"
-    Invoke-WebRequest -Uri $chromeUrl -OutFile $installerPath -UseBasicParsing
-    Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-    Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-    "Chrome installed/updated successfully" | Out-File $Log -Append
-  } catch {
-    "Chrome install failed: $_" | Out-File $Log -Append
-  }
-
-  "Step: Uninstall Microsoft Edge (winget)" | Out-File $Log -Append
-  try {
-    winget uninstall --id Microsoft.Edge --silent --accept-package-agreements --accept-source-agreements | Out-File $Log -Append
-    "winget uninstall executed" | Out-File $Log -Append
-  } catch {
-    "winget uninstall failed or Edge not present: $_" | Out-File $Log -Append
-  }
-  try {
-    Get-AppxPackage -Name "Microsoft.MicrosoftEdge" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
-    Get-AppxPackage -Name "Microsoft.Edge" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
-    "Appx removal attempts done" | Out-File $Log -Append
-  } catch {
-    "Appx removal error: $_" | Out-File $Log -Append
-  }
-
-  "Step: Create RDP User with Secure Password" | Out-File $Log -Append
-  try {
-    Add-Type -AssemblyName System.Security
-    $charSet = @{
-      Upper   = [char[]](65..90)
-      Lower   = [char[]](97..122)
-      Number  = [char[]](48..57)
-      Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
-    }
-    $rawPassword = @()
-    $rawPassword += $charSet.Upper | Get-Random -Count 4
-    $rawPassword += $charSet.Lower | Get-Random -Count 4
-    $rawPassword += $charSet.Number | Get-Random -Count 4
-    $rawPassword += $charSet.Special | Get-Random -Count 4
-    $password = -join ($rawPassword | Sort-Object { Get-Random })
-    $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-    if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
-      New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-      Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-      Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-      "RDP user created. Password: $password" | Out-File $Log -Append
-    } else {
-      "RDP user already exists" | Out-File $Log -Append
-    }
-  } catch {
-    "User creation error: $_" | Out-File $Log -Append
-  }
-
-  "Step: Install Tailscale" | Out-File $Log -Append
-  try {
-    $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-    $installerPath = "$env:TEMP\tailscale.msi"
-    Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-    Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-    Remove-Item $installerPath -Force
-    "Tailscale installed" | Out-File $Log -Append
-  } catch {
-    "Tailscale install failed: $_" | Out-File $Log -Append
-  }
-
-  "Step: Bring up Tailscale (manual auth key required in this context)" | Out-File $Log -Append
-  try {
-    # Note: For security, this script cannot access GitHub secrets. If running on a self-hosted machine,
-    # set an environment variable TAILSCALE_AUTH_KEY beforehand or embed an approved key here.
-    if ($env:TAILSCALE_AUTH_KEY) {
-      & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=gh-runner-auto
-      "Tailscale up attempted" | Out-File $Log -Append
-      $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-      "Tailscale IP: $tsIP" | Out-File $Log -Append
-    } else {
-      "No TAILSCALE_AUTH_KEY env var found. Skipping 'tailscale up' step." | Out-File $Log -Append
-    }
-  } catch {
-    "Tailscale up error: $_" | Out-File $Log -Append
-  }
-
-  "Cleanup: remove scheduled task and this script" | Out-File $Log -Append
-  try {
-    Unregister-ScheduledTask -TaskName "GH_Continue_After_Reboot" -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -Path "C:\actions\continue.ps1" -Force -ErrorAction SilentlyContinue
-    "Scheduled task removed and script deleted." | Out-File $Log -Append
-  } catch {
-    "Cleanup error: $_" | Out-File $Log -Append
-  }
-
-} catch {
-  "Unhandled error in continue script: $_" | Out-File $Log -Append
-}
-
-"==== Continue script finished: $(Get-Date) ====" | Out-File -FilePath $Log -Encoding utf8 -Append
-'@
-
-          # Save the continuation script
-          $continueScript | Out-File -FilePath "C:\actions\continue.ps1" -Encoding utf8 -Force
-
-          # Register scheduled task to run continuation script at startup as SYSTEM
-          try {
-            $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `\"C:\actions\continue.ps1`\""
-            $trigger = New-ScheduledTaskTrigger -AtStartup
-            $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-            Register-ScheduledTask -TaskName "GH_Continue_After_Reboot" -Action $action -Trigger $trigger -Principal $principal -Force
-            Write-Host "Scheduled task 'GH_Continue_After_Reboot' registered."
-          } catch {
-            Write-Warning "Failed to register scheduled task: $_"
-            Write-Host "As fallback, creating a simple startup shortcut for the script..."
-            $shortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\continue.ps1.lnk"
-            $WshShell = New-Object -ComObject WScript.Shell
-            $lnk = $WshShell.CreateShortcut($shortcutPath)
-            $lnk.TargetPath = "powershell.exe"
-            $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `\"C:\actions\continue.ps1`\""
-            $lnk.Save()
-            Write-Host "Startup shortcut created at $shortcutPath"
-          }
-
-          Write-Host "System will reboot in 10 seconds to apply language and region changes and then run continuation script at startup..."
-          Write-Host "IMPORTANT: This mechanism works reliably only on self-hosted runners or persistent VMs. On GitHub-hosted ephemeral runners the instance will be destroyed and continuation WILL NOT run."
-          shutdown /r /t 10 /f
+          Write-Host "Language/region changes applied. Note: A reboot or sign-out may be required for all changes to take full effect."
 
       - name: Install or Upgrade WSL2
-        if: always()
         run: |
-          # This step will not continue in the same workflow run if reboot occurs.
           try {
               $wslStatus = wsl --status 2>&1
               Write-Host "WSL is already installed"
@@ -279,12 +121,14 @@ try {
       - name: Uninstall Microsoft Edge with winget
         run: |
           Write-Host "Uninstalling Microsoft Edge using winget..."
+          # Try to uninstall Edge (Chromium) via winget; ignore errors if not present
           try {
             winget uninstall --id Microsoft.Edge --silent --accept-package-agreements --accept-source-agreements
             Write-Host "winget uninstall command executed."
           } catch {
             Write-Warning "winget uninstall failed or Edge not present: $_"
           }
+          # Also attempt to remove residual packages (best-effort)
           try {
             Get-AppxPackage -Name "Microsoft.MicrosoftEdge" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
             Get-AppxPackage -Name "Microsoft.Edge" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
