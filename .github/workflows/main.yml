@@ -72,10 +72,12 @@ jobs:
               Write-Host "Continuing without Chrome update..."
           }
 
-      - name: Uninstall Microsoft Edge with winget
+      - name: Uninstall Microsoft Edge
+        shell: pwsh
+        continue-on-error: true
         run: |
           Write-Host "Uninstalling Microsoft Edge using winget..."
-          winget uninstall --id Microsoft.Edge --silent --accept-package-agreements --accept-source-agreements
+          winget uninstall "Microsoft Edge" --silent
           Write-Host "Microsoft Edge has been uninstalled (if present)."
 
       - name: Create RDP User with Secure Password
