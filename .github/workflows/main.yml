@@ -75,8 +75,12 @@ jobs:
       - name: Uninstall Microsoft Edge with winget
         run: |
           Write-Host "Uninstalling Microsoft Edge using winget..."
-          winget uninstall --id Microsoft.Edge --silent --accept-source-agreements
-          Write-Host "Microsoft Edge has been uninstalled (if present)."
+          try {
+              winget uninstall --id Microsoft.Edge --silent --accept-source-agreements
+              Write-Host "Microsoft Edge has been uninstalled (if present)."
+          } catch {
+              Write-Warning "Failed to uninstall Microsoft Edge. This is expected on some Windows versions where Edge is a protected component. Continuing..."
+          }
 
       - name: Create RDP User with Secure Password
         run: |
