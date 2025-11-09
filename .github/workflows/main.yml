@@ -1,4 +1,4 @@
-name: RDP
+ name: RDP
 
 on:
   workflow_dispatch:
@@ -36,52 +36,6 @@ jobs:
           Set-Service -Name "Audiosrv" -StartupType Automatic
           Start-Service -Name "Audiosrv"
           Write-Host "Audio service enabled and started successfully"
-
-      - name: Install Vietnamese Language Pack & Set Locale to Vietnam
-        run: |
-          Write-Host "Installing Vietnamese language pack and setting system locale and region to Vietnam..."
-
-          # Install Vietnamese language capabilities (best-effort). Some capabilities may already be present.
-          $caps = @(
-            "Language.Basic~~~vi-VN~0.0.1.0",
-            "Language.Handwriting~~~vi-VN~0.0.1.0",
-            "Language.OCR~~~vi-VN~0.0.1.0",
-            "Language.Speech~~~vi-VN~0.0.1.0",
-            "Language.TextToSpeech~~~vi-VN~0.0.1.0"
-          )
-
-          foreach ($cap in $caps) {
-            try {
-              Write-Host "Adding capability $cap..."
-              Add-WindowsCapability -Online -Name $cap -ErrorAction Stop
-            } catch {
-              Write-Warning "Could not add capability $cap (may already exist or not available): $_"
-            }
-          }
-
-          # Set UI language and user language list to Vietnamese
-          try {
-            Set-WinUILanguageOverride -Language "vi-VN"
-            $langList = New-WinUserLanguageList -Language "vi-VN"
-            $langList[0].Handwriting = $true
-            Set-WinUserLanguageList $langList -Force
-            Write-Host "User UI language set to vi-VN."
-          } catch {
-            Write-Warning "Failed to set WinUILanguage/UserLanguageList: $_"
-          }
-
-          # Set system locale, culture, home location and timezone
-          try {
-            Set-WinSystemLocale -SystemLocale "vi-VN"
-            Set-Culture "vi-VN"
-            Set-WinHomeLocation -GeoId 237
-            Set-TimeZone -Id "SE Asia Standard Time"
-            Write-Host "System locale, culture, home location and timezone set to Vietnam."
-          } catch {
-            Write-Warning "Failed to set system locale / culture / timezone: $_"
-          }
-
-          Write-Host "Language/region changes applied. Note: A reboot or sign-out may be required for all changes to take full effect."
 
       - name: Install or Upgrade WSL2
         run: |
@@ -121,20 +75,8 @@ jobs:
       - name: Uninstall Microsoft Edge with winget
         run: |
           Write-Host "Uninstalling Microsoft Edge using winget..."
-          # Try to uninstall Edge (Chromium) via winget; ignore errors if not present
-          try {
-            winget uninstall --id Microsoft.Edge --silent --accept-package-agreements --accept-source-agreements
-            Write-Host "winget uninstall command executed."
-          } catch {
-            Write-Warning "winget uninstall failed or Edge not present: $_"
-          }
-          # Also attempt to remove residual packages (best-effort)
-          try {
-            Get-AppxPackage -Name "Microsoft.MicrosoftEdge" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
-            Get-AppxPackage -Name "Microsoft.Edge" -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction SilentlyContinue
-          } catch {
-            Write-Warning "AppxPackage removal attempt failed or package not present."
-          }
+          winget uninstall --id Microsoft.Edge --silent --accept-package-agreements --accept-source-agreements
+          Write-Host "Microsoft Edge has been uninstalled (if present)."
 
       - name: Create RDP User with Secure Password
         run: |
